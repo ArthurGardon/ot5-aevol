@@ -38,6 +38,8 @@ using namespace std;
 // For time tracing
 #include "Timetracer.h"
 
+#include "omp.h"
+
 /**
  * Constructor for initializing a new simulation
  *
@@ -299,7 +301,6 @@ ExpManager::~ExpManager() {
 void ExpManager::selection(int indiv_id) const {
     double local_fit_array[NEIGHBORHOOD_SIZE];
     double probs[NEIGHBORHOOD_SIZE];
-    int count = 0;
     double sum_local_fit = 0.0;
 
     int32_t x = indiv_id / grid_height_;
@@ -307,18 +308,19 @@ void ExpManager::selection(int indiv_id) const {
 
     int cur_x, cur_y;
 
+    #pragma omp simd reduction(+:sum_local_fit) collapse(2)
     for (int8_t i = -1; i < NEIGHBORHOOD_WIDTH - 1; i++) {
         for (int8_t j = -1; j < NEIGHBORHOOD_HEIGHT - 1; j++) {
             cur_x = (x + i + grid_width_) % grid_width_;
             cur_y = (y + j + grid_height_) % grid_height_;
 
+            int count = (i+1) * NEIGHBORHOOD_HEIGHT  + (j+1);
             local_fit_array[count] = prev_internal_organisms_[cur_x * grid_width_ + cur_y]->fitness;
             sum_local_fit += local_fit_array[count];
-
-            count++;
         }
     }
 
+    #pragma omp simd
     for (int8_t i = 0; i < NEIGHBORHOOD_SIZE; i++) {
         probs[i] = local_fit_array[i] / sum_local_fit;
     }

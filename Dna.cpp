@@ -3,6 +3,7 @@
 //
 
 #include "Dna.h"
+#include "omp.h"
 
 #include <cassert>
 
@@ -123,42 +124,24 @@ void Dna::do_duplication(int pos_1, int pos_2, int pos_3) {
 }
 
 int Dna::promoter_at(int pos) {
-    int prom_dist[PROM_SIZE];
-
+    int prom_dist[PROM_SIZE] __attribute__ ((aligned(32)));
+    int dist_lead = 0;
+    //storing size seems 2x slower
+    // int seq_size = seq_.size();
+    #pragma omp simd reduction(+:dist_lead) aligned(prom_dist:32)
     for (int motif_id = 0; motif_id < PROM_SIZE; motif_id++) {
         int search_pos = pos + motif_id;
+        // if (search_pos >= seq_size)
+        //     search_pos -= seq_size;
         if (search_pos >= seq_.size())
             search_pos -= seq_.size();
         // Searching for the promoter
         prom_dist[motif_id] =
                 PROM_SEQ[motif_id] == seq_[search_pos] ? 0 : 1;
 
+        // Computing if a promoter exists at that position
+        dist_lead += prom_dist[motif_id];
     }
-
-
-    // Computing if a promoter exists at that position
-    int dist_lead = prom_dist[0] +
-                    prom_dist[1] +
-                    prom_dist[2] +
-                    prom_dist[3] +
-                    prom_dist[4] +
-                    prom_dist[5] +
-                    prom_dist[6] +
-                    prom_dist[7] +
-                    prom_dist[8] +
-                    prom_dist[9] +
-                    prom_dist[10] +
-                    prom_dist[11] +
-                    prom_dist[12] +
-                    prom_dist[13] +
-                    prom_dist[14] +
-                    prom_dist[15] +
-                    prom_dist[16] +
-                    prom_dist[17] +
-                    prom_dist[18] +
-                    prom_dist[19] +
-                    prom_dist[20] +
-                    prom_dist[21];
 
     return dist_lead;
 }
@@ -166,7 +149,9 @@ int Dna::promoter_at(int pos) {
 // Given a, b, c, d boolean variable and X random boolean variable,
 // a terminator look like : a b c d X X !d !c !b !a
 int Dna::terminator_at(int pos) {
-    int term_dist[TERM_STEM_SIZE];
+    int term_dist[TERM_STEM_SIZE] __attribute__ ((aligned(32)));
+    int dist_term_lead = 0;
+    #pragma omp simd reduction(+:dist_term_lead) aligned(term_dist:32)
     for (int motif_id = 0; motif_id < TERM_STEM_SIZE; motif_id++) {
         int right = pos + motif_id;
         int left = pos + (TERM_SIZE - 1) - motif_id;
@@ -177,19 +162,16 @@ int Dna::terminator_at(int pos) {
 
         // Search for the terminators
         term_dist[motif_id] = seq_[right] != seq_[left] ? 1 : 0;
+        dist_term_lead += term_dist[motif_id];
     }
-    int dist_term_lead = term_dist[0] +
-                         term_dist[1] +
-                         term_dist[2] +
-                         term_dist[3];
-
     return dist_term_lead;
 }
 
 bool Dna::shine_dal_start(int pos) {
-    bool start = false;
+    bool start[SHINE_DAL_SIZE + CODON_SIZE];
     int t_pos, k_t;
 
+    #pragma omp simd
     for (int k = 0; k < SHINE_DAL_SIZE + CODON_SIZE; k++) {
         k_t = k >= SHINE_DAL_SIZE ? k + SD_START_SPACER : k;
         t_pos = pos + k_t;
@@ -197,34 +179,33 @@ bool Dna::shine_dal_start(int pos) {
             t_pos -= seq_.size();
 
         if (seq_[t_pos] == SHINE_DAL_SEQ[k_t]) {
-            start = true;
+            start[k] = true;
         } else {
-            start = false;
-            break;
+            start[k] = false;
         }
     }
 
-    return start;
+    return start[0] && start[1] &&start[2] &&start[3] &&start[4] &&start[5] && start[6]&&start[7] && start[8];
 }
 
 bool Dna::protein_stop(int pos) {
-    bool is_protein;
+    bool ais_protein[CODON_SIZE];
     int t_k;
 
+    #pragma omp simd
     for (int k = 0; k < CODON_SIZE; k++) {
         t_k = pos + k;
         if (t_k >= seq_.size())
             t_k -= seq_.size();
 
         if (seq_[t_k] == PROTEIN_END[k]) {
-            is_protein = true;
+            ais_protein[k] = true;
         } else {
-            is_protein = false;
-            break;
+            ais_protein[k] = false;
         }
     }
 
-    return is_protein;
+    return ais_protein[0] && ais_protein[1] && ais_protein[2];
 }
 
 int Dna::codon_at(int pos) {
