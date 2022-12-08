@@ -6,12 +6,14 @@
 #include "omp.h"
 
 #include <cassert>
+#include <bitset>
 
 Dna::Dna(int length, Threefry::Gen &&rng) : seq_(length) {
     // Generate a random genome
     for (int32_t i = 0; i < length; i++) {
         seq_[i] = '0' + rng.random(NB_BASE);
     }
+    update_loop();
 }
 
 int Dna::length() const {
@@ -22,6 +24,7 @@ void Dna::save(gzFile backup_file) {
     int dna_length = length();
     gzwrite(backup_file, &dna_length, sizeof(dna_length));
     gzwrite(backup_file, seq_.data(), dna_length * sizeof(seq_[0]));
+    update_loop();
 }
 
 void Dna::load(gzFile backup_file) {
@@ -32,10 +35,24 @@ void Dna::load(gzFile backup_file) {
     gzread(backup_file, tmp_seq, dna_length * sizeof(tmp_seq[0]));
 
     seq_ = std::vector<char>(tmp_seq, tmp_seq + dna_length);
+    update_loop();
 }
 
 void Dna::set(int pos, char c) {
     seq_[pos] = c;
+    update_loop();
+}
+
+void Dna::update_loop()
+{
+    //probably a smarter way to trim the looped dna eg. find largest overlap
+    looped.resize(3 * seq_.size());
+    looped.insert(looped.begin(), seq_.begin(), seq_.end());
+    looped.insert(looped.begin() + seq_.size(), seq_.begin(), seq_.end());
+    looped.insert(looped.begin() + 2 * seq_.size(), seq_.begin(), seq_.end());
+
+    // looped.insert(looped.begin(), seq_.end() - TERM_STEM_SIZE, seq_.end());
+    // looped.insert(looped.end() - TERM_STEM_SIZE, seq_.begin(), seq_.begin() + TERM_STEM_SIZE);
 }
 
 /**
@@ -47,6 +64,7 @@ void Dna::set(int pos, char c) {
 void Dna::remove(int pos_1, int pos_2) {
     assert(pos_1 >= 0 && pos_2 >= pos_1 && pos_2 <= seq_.size());
     seq_.erase(seq_.begin() + pos_1, seq_.begin() + pos_2);
+    update_loop();
 }
 
 /**
@@ -61,6 +79,7 @@ void Dna::insert(int pos, std::vector<char> seq) {
     assert(pos >= 0 && pos < seq_.size());
 
     seq_.insert(seq_.begin() + pos, seq.begin(), seq.end());
+    update_loop();
 }
 
 /**
@@ -75,11 +94,13 @@ void Dna::insert(int pos, Dna *seq) {
     assert(pos >= 0 && pos < seq_.size());
 
     seq_.insert(seq_.begin() + pos, seq->seq_.begin(), seq->seq_.end());
+    update_loop();
 }
 
 void Dna::do_switch(int pos) {
     if (seq_[pos] == '0') seq_[pos] = '1';
     else seq_[pos] = '0';
+    update_loop();
 }
 
 void Dna::do_duplication(int pos_1, int pos_2, int pos_3) {
@@ -130,14 +151,10 @@ int Dna::promoter_at(int pos) {
     // int seq_size = seq_.size();
     #pragma omp simd reduction(+:dist_lead) aligned(prom_dist:32)
     for (int motif_id = 0; motif_id < PROM_SIZE; motif_id++) {
-        int search_pos = pos + motif_id;
-        // if (search_pos >= seq_size)
-        //     search_pos -= seq_size;
-        if (search_pos >= seq_.size())
-            search_pos -= seq_.size();
+        int search_pos = pos + motif_id + seq_.size();
         // Searching for the promoter
         prom_dist[motif_id] =
-                PROM_SEQ[motif_id] == seq_[search_pos] ? 0 : 1;
+                PROM_SEQ[motif_id] == looped[search_pos] ? 0 : 1;
 
         // Computing if a promoter exists at that position
         dist_lead += prom_dist[motif_id];
@@ -153,15 +170,11 @@ int Dna::terminator_at(int pos) {
     int dist_term_lead = 0;
     #pragma omp simd reduction(+:dist_term_lead) aligned(term_dist:32)
     for (int motif_id = 0; motif_id < TERM_STEM_SIZE; motif_id++) {
-        int right = pos + motif_id;
-        int left = pos + (TERM_SIZE - 1) - motif_id;
-
-        // loop back the dna inf needed
-        if (right >= length()) right -= length();
-        if (left >= length()) left -= length();
+        int right = pos + motif_id + seq_.size();
+        int left = pos + (TERM_SIZE - 1) - motif_id + seq_.size();
 
         // Search for the terminators
-        term_dist[motif_id] = seq_[right] != seq_[left] ? 1 : 0;
+        term_dist[motif_id] = looped[right] != looped[left] ? 1 : 0;
         dist_term_lead += term_dist[motif_id];
     }
     return dist_term_lead;
@@ -174,15 +187,9 @@ bool Dna::shine_dal_start(int pos) {
     #pragma omp simd
     for (int k = 0; k < SHINE_DAL_SIZE + CODON_SIZE; k++) {
         k_t = k >= SHINE_DAL_SIZE ? k + SD_START_SPACER : k;
-        t_pos = pos + k_t;
-        if (t_pos >= seq_.size())
-            t_pos -= seq_.size();
+        t_pos = pos + k_t + seq_.size();
 
-        if (seq_[t_pos] == SHINE_DAL_SEQ[k_t]) {
-            start[k] = true;
-        } else {
-            start[k] = false;
-        }
+        start[k] = (looped[t_pos] == SHINE_DAL_SEQ[k_t]) ;
     }
 
     return start[0] && start[1] &&start[2] &&start[3] &&start[4] &&start[5] && start[6]&&start[7] && start[8];
@@ -194,15 +201,9 @@ bool Dna::protein_stop(int pos) {
 
     #pragma omp simd
     for (int k = 0; k < CODON_SIZE; k++) {
-        t_k = pos + k;
-        if (t_k >= seq_.size())
-            t_k -= seq_.size();
+        t_k = pos + k + seq_.size();
 
-        if (seq_[t_k] == PROTEIN_END[k]) {
-            ais_protein[k] = true;
-        } else {
-            ais_protein[k] = false;
-        }
+        ais_protein[k]  = (looped[t_k] == PROTEIN_END[k])  ;  
     }
 
     return ais_protein[0] && ais_protein[1] && ais_protein[2];
@@ -214,10 +215,8 @@ int Dna::codon_at(int pos) {
     int t_pos;
 
     for (int i = 0; i < CODON_SIZE; i++) {
-        t_pos = pos + i;
-        if (t_pos >= seq_.size())
-            t_pos -= seq_.size();
-        if (seq_[t_pos] == '1')
+        t_pos = pos + i + seq_.size();
+        if (looped[t_pos] == '1')
             value += 1 << (CODON_SIZE - i - 1);
     }
 

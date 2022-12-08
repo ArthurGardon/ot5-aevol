@@ -29,6 +29,8 @@ public:
 
     void set(int pos, char c);
 
+    void update_loop();
+
     /// Remove the DNA inbetween pos_1 and pos_2
     void remove(int pos_1, int pos_2);
 
@@ -53,4 +55,5 @@ public:
     int codon_at(int pos);
 
     std::vector<char> seq_;
+    std::vector<char> looped;
 };
