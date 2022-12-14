@@ -144,6 +144,7 @@ void Dna::do_duplication(int pos_1, int pos_2, int pos_3) {
     }
 }
 
+#pragma omp declare simd
 int Dna::promoter_at(int pos) {
     int prom_dist[PROM_SIZE] __attribute__ ((aligned(32)));
     int dist_lead = 0;
